@@ -1,4 +1,7 @@
 {
+  "/one-shot-revision/page": "app/one-shot-revision/page.js",
   "/class-library/page": "app/class-library/page.js",
-  "/api/chapter-playlists/route": "app/api/chapter-playlists/route.js"
+  "/api/chapter-playlists/route": "app/api/chapter-playlists/route.js",
+  "/api/one-shot-revision/route": "app/api/one-shot-revision/route.js",
+  "/api/resource-sync/route": "app/api/resource-sync/route.js"
 }
