@@ -32,6 +32,9 @@ const CATEGORY_META: Record<Category, { label: string; icon: string }> = {
 function normalize(value: string) {
   return String(value || "").trim().toLowerCase();
 }
+function normalizeChapterName(value: string) {
+  return normalize(String(value || "").replace(/^\s*\d+\s*[_.)-]\s*/, ""));
+}
 
 function pdfSrc(pathValue: string) {
   return `/api/pdf-file?path=${encodeURIComponent(pathValue)}`;
@@ -62,7 +65,7 @@ export default function ClassLibraryPage() {
     const map = new Map<string, Playlist>();
     for (const item of playlists) {
       if (normalize(item.subject) !== normalize(subject)) continue;
-      const key = normalize(item.chapter);
+      const key = normalizeChapterName(item.chapter);
       if (!map.has(key)) map.set(key, item);
     }
     return [...map.values()].sort((a, b) => a.chapter.localeCompare(b.chapter, undefined, { numeric: true, sensitivity: "base" }));
@@ -121,11 +124,11 @@ export default function ClassLibraryPage() {
     if (nextPlaylist) {
       setPlaylists((current) => {
         const exists = current.some(
-          (item) => normalize(item.subject) === normalize(nextPlaylist.subject) && normalize(item.chapter) === normalize(nextPlaylist.chapter),
+          (item) => normalize(item.subject) === normalize(nextPlaylist.subject) && normalizeChapterName(item.chapter) === normalizeChapterName(nextPlaylist.chapter),
         );
         if (!exists) return [...current, nextPlaylist];
         return current.map((item) =>
-          normalize(item.subject) === normalize(nextPlaylist.subject) && normalize(item.chapter) === normalize(nextPlaylist.chapter)
+          normalize(item.subject) === normalize(nextPlaylist.subject) && normalizeChapterName(item.chapter) === normalizeChapterName(nextPlaylist.chapter)
             ? nextPlaylist
             : item,
         );
@@ -168,7 +171,7 @@ export default function ClassLibraryPage() {
 
   useEffect(() => {
     if (!restoredChapterRef.current) return;
-    const matchedChapter = chapters.find((value) => normalize(value.chapter) === normalize(chapter));
+    const matchedChapter = chapters.find((value) => normalizeChapterName(value.chapter) === normalizeChapterName(chapter));
     if (!matchedChapter && chapters.length) setChapter(chapters[0].chapter);
     else if (!matchedChapter) setChapter("");
     else if (matchedChapter.chapter !== chapter) setChapter(matchedChapter.chapter);
@@ -254,7 +257,11 @@ export default function ClassLibraryPage() {
         setChapter(keptChapter);
         if (keptChapter) await loadChapter(keptSubject, keptChapter);
       }
-      setMsg(`Library synced ✓. ${data.syncedChapters || 0} chapters scanned.`);
+      const syncTotals = (data.results || []).reduce((acc: { classCount: number; dppCount: number }, item: any) => ({
+        classCount: acc.classCount + Number(item?.videos?.class?.found || 0),
+        dppCount: acc.dppCount + Number(item?.videos?.dpp?.found || 0),
+      }), { classCount: 0, dppCount: 0 });
+      setMsg(`Library synced ✓. ${data.syncedChapters || 0} chapters scanned · ${syncTotals.classCount} Class + ${syncTotals.dppCount} DPP videos found.`);
     } catch (error: any) {
       setMsg(error?.message || "Sync failed");
     } finally {

@@ -1,0 +1,2 @@
+===== 04-10-2026 22:55:00.65 ===== 
+Backup done: D:\GATE-Backup\db\local-2026-10-04_22-55-00.db (only ONE location - set BACKUP_DIR_2 for a second copy)

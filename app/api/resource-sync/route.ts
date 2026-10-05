@@ -29,6 +29,35 @@ function normalizeKey(value: string) {
   return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase().trim();
 }
 
+function normalizeName(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeChapterName(value: string) {
+  // Folder numbering is display/order metadata, not part of the chapter identity.
+  // This makes `6_Structure and Union` and `Structure and Union` the same chapter.
+  return normalizeName(String(value || "").replace(/^\s*\d+\s*[_.)-]\s*/, ""));
+}
+
+function sameChapterName(a: string, b: string) {
+  return normalizeChapterName(a) === normalizeChapterName(b);
+}
+
+function isVideoFolderName(name: string, kind: "class" | "dpp") {
+  const normalized = normalizeName(name);
+  if (kind === "class") {
+    return /^(class|classes)(?:\s+(?:video|videos|lecture|lectures))?$/.test(normalized)
+      || /^class\s+vid(?:eo|eos)?$/.test(normalized);
+  }
+  return /^(dpp|dpps)(?:\s+(?:video|videos|lecture|lectures))?$/.test(normalized)
+    || /^dpp\s+vid(?:eo|eos)?$/.test(normalized);
+}
+
 function isDir(p: string) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
@@ -62,7 +91,7 @@ function walkDirs(root: string): string[] {
 function looksLikeChapter(dir: string) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   return entries.some((entry) =>
-    entry.isDirectory() && /^(class|dpp)[_\s-]*vid/i.test(entry.name)
+    entry.isDirectory() && (isVideoFolderName(entry.name, "class") || isVideoFolderName(entry.name, "dpp"))
   ) || entries.some((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(PDF_EXT));
 }
 function findChapterDirs(root: string) {
@@ -76,8 +105,8 @@ function chapterFor(chapterDir: string) {
   return path.basename(chapterDir);
 }
 function videoDir(chapterDir: string, kind: "class" | "dpp") {
-  const re = kind === "class" ? /^class[_\s-]*vid/i : /^dpp[_\s-]*vid/i;
-  const entry = fs.readdirSync(chapterDir, { withFileTypes: true }).find((e) => e.isDirectory() && re.test(e.name));
+  const entries = fs.readdirSync(chapterDir, { withFileTypes: true });
+  const entry = entries.find((e) => e.isDirectory() && isVideoFolderName(e.name, kind));
   return entry ? path.join(chapterDir, entry.name) : "";
 }
 function videoFiles(folder: string) {
@@ -115,7 +144,7 @@ async function dedupePlaylists() {
   const rows = await db.execute("SELECT id, subject, chapter FROM chapter_playlists ORDER BY created_at ASC, rowid ASC");
   const groups = new Map<string, any[]>();
   for (const row of rows.rows as any[]) {
-    const key = `${String(row.subject).trim().toLowerCase()}\n${String(row.chapter).trim().toLowerCase()}`;
+    const key = `${String(row.subject).trim().toLowerCase()}\n${normalizeChapterName(String(row.chapter))}`;
     const group = groups.get(key) || [];
     group.push(row);
     groups.set(key, group);
@@ -123,8 +152,14 @@ async function dedupePlaylists() {
 
   for (const group of groups.values()) {
     if (group.length < 2) continue;
-    const keeper = group[0];
-    for (const duplicate of group.slice(1)) {
+    // Prefer the playlist whose chapter folder still exists on disk. After a
+    // Windows Explorer rename, the stale record may be older and otherwise
+    // win the dedupe, which can make the real renamed chapter disappear.
+    const keeper = group.find((row) => {
+      const p = String(row.video_root_path || "").trim();
+      return !!p && fs.existsSync(path.resolve(p)) && fs.statSync(path.resolve(p)).isDirectory();
+    }) || group[0];
+    for (const duplicate of group.filter((row) => row.id !== keeper.id)) {
       const videos = await db.execute({ sql: "SELECT * FROM chapter_videos WHERE playlist_id=?", args: [duplicate.id] });
       for (const video of videos.rows as any[]) {
         const existing = await db.execute({
@@ -164,10 +199,12 @@ async function ensurePlaylist(subject: string, chapter: string, chapterDir: stri
     return id;
   }
 
-  const existing = await db.execute({
-    sql: "SELECT id FROM chapter_playlists WHERE lower(trim(subject))=lower(trim(?)) AND lower(trim(chapter))=lower(trim(?)) LIMIT 1",
-    args: [subject, chapter],
+  const existingRows = await db.execute({
+    sql: "SELECT id, chapter FROM chapter_playlists WHERE lower(trim(subject))=lower(trim(?))",
+    args: [subject],
   });
+  const existingMatch = (existingRows.rows as any[]).find((row) => normalizeChapterName(String(row.chapter)) === normalizeChapterName(chapter));
+  const existing = existingMatch ? { rows: [existingMatch] } : { rows: [] as any[] };
   if (existing.rows.length) {
     const id = String((existing.rows[0] as any).id);
     await db.execute({ sql: "UPDATE chapter_playlists SET subject=?, chapter=?, video_root_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", args: [subject, chapter, chapterDir, id] });
@@ -309,19 +346,42 @@ async function syncPdf(file: string, subject: string, chapter: string) {
 }
 
 async function removeStalePlaylists(root: string, discovered: Set<string>) {
-  const rows = await db.execute("SELECT id, subject, chapter, video_root_path FROM chapter_playlists WHERE video_root_path IS NOT NULL AND video_root_path <> ''");
+  // The filesystem is the source of truth. A playlist whose chapter directory
+  // is no longer one of the currently discovered chapter directories is stale,
+  // even when an ancestor folder still exists (the old implementation could
+  // incorrectly keep such records alive).
+  const rows = await db.execute("SELECT id, subject, chapter, video_root_path, class_video_path, dpp_video_path FROM chapter_playlists");
+  const rootKey = normalizeKey(root);
+  const discoveredKeys = new Set([...discovered].map((value) => normalizeKey(value)));
+
   for (const row of rows.rows as any[]) {
-    const storedPath = String(row.video_root_path || "");
-    if (!storedPath) continue;
-    const resolved = path.resolve(storedPath);
-    const rootKey = normalizeKey(root);
+    const source = String(row.video_root_path || row.class_video_path || row.dpp_video_path || "").trim();
+    if (!source) continue;
+
+    const resolved = path.resolve(source);
     const resolvedKey = normalizeKey(resolved);
-    if (!(resolvedKey === rootKey || resolvedKey.startsWith(rootKey + "/"))) continue;
-    const key = `${String(row.subject).trim().toLowerCase()}\n${String(row.chapter).trim().toLowerCase()}`;
-    if (!discovered.has(key) && !isDir(resolved)) {
+    const underRoot = resolvedKey === rootKey || resolvedKey.startsWith(rootKey + "/");
+    if (!underRoot) continue;
+
+    // Keep only playlists backed by a currently discovered chapter directory.
+    // This removes old entries left behind after a Windows File Explorer rename,
+    // move, or delete, including blank duplicate chapters.
+    if (!discoveredKeys.has(resolvedKey) || !isDir(resolved)) {
       await db.execute({ sql: "DELETE FROM chapter_videos WHERE playlist_id=?", args: [row.id] });
       await db.execute({ sql: "DELETE FROM chapter_playlists WHERE id=?", args: [row.id] });
     }
+  }
+
+  // Also purge video rows whose physical source was renamed/deleted outside
+  // the dashboard. This prevents blank video entries from surviving.
+  const videos = await db.execute("SELECT id, playlist_id, path_or_url FROM chapter_videos");
+  for (const row of videos.rows as any[]) {
+    const raw = String(row.path_or_url || "").trim();
+    if (!raw) continue;
+    const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(DATA_DIR, raw);
+    const absKey = normalizeKey(abs);
+    if (!(absKey === rootKey || absKey.startsWith(rootKey + "/"))) continue;
+    if (!isFile(abs)) await db.execute({ sql: "DELETE FROM chapter_videos WHERE id=?", args: [row.id] });
   }
 }
 
@@ -391,13 +451,17 @@ export async function POST(req: Request) {
 
     const requestedSubject = String(body.subject || "").trim();
     const requestedChapter = String(body.chapter || "").trim();
-    const dirs = findChapterDirs(rootPath).filter((dir) => {
+    const allDirs = findChapterDirs(rootPath);
+    const dirs = allDirs.filter((dir) => {
       const subject = subjectFor(rootPath, dir);
       const chapter = chapterFor(dir);
-      return (!requestedSubject || normalizeKey(subject) === normalizeKey(requestedSubject)) &&
-        (!requestedChapter || normalizeKey(chapter) === normalizeKey(requestedChapter));
+      return (!requestedSubject || normalizeName(subject) === normalizeName(requestedSubject)) &&
+        (!requestedChapter || sameChapterName(chapter, requestedChapter));
     });
-    const discovered = new Set(dirs.map((dir) => `${subjectFor(rootPath, dir).trim().toLowerCase()}\n${chapterFor(dir).trim().toLowerCase()}`));
+    // Reconciliation always uses the complete current filesystem inventory, even
+    // for a single-chapter sync. Otherwise syncing one chapter could incorrectly
+    // delete every other valid chapter from the database.
+    const discovered = new Set(allDirs.map((dir) => dir));
 
     const results = [];
     for (const dir of dirs) results.push(await syncChapter(rootPath, dir));

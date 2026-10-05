@@ -15,6 +15,7 @@ function cleanTitle(filename: string) {
 }
 function naturalSort(a: string, b: string) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }); }
 function normalize(value: string) { return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase().trim(); }
+function normalizeChapterName(value: string) { return normalize(String(value || "").replace(/^\s*\d+\s*[_.)-]\s*/, "")); }
 function idFor(prefix: string, value: string) { return `${prefix}_${crypto.createHash("sha1").update(value.toLowerCase()).digest("hex").slice(0, 28)}`; }
 function hashFile(file: string) {
   const hash = crypto.createHash("sha256");
@@ -39,13 +40,16 @@ async function dedupe() {
   const rows = await db.execute("SELECT id, subject, chapter FROM chapter_playlists ORDER BY created_at ASC, rowid ASC");
   const groups = new Map<string, any[]>();
   for (const row of rows.rows as any[]) {
-    const key = `${normalize(String(row.subject))}\n${normalize(String(row.chapter))}`;
+    const key = `${normalize(String(row.subject))}\n${normalizeChapterName(String(row.chapter))}`;
     const arr = groups.get(key) || []; arr.push(row); groups.set(key, arr);
   }
   for (const arr of groups.values()) {
     if (arr.length < 2) continue;
-    const keep = arr[0];
-    for (const dup of arr.slice(1)) {
+    const keep = arr.find((row) => {
+      const p = String(row.video_root_path || "").trim();
+      return !!p && fs.existsSync(path.resolve(p)) && fs.statSync(path.resolve(p)).isDirectory();
+    }) || arr[0];
+    for (const dup of arr.filter((row) => row.id !== keep.id)) {
       const vids = await db.execute({ sql: "SELECT * FROM chapter_videos WHERE playlist_id=?", args: [dup.id] });
       for (const v of vids.rows as any[]) {
         const existing = await db.execute({
@@ -129,10 +133,22 @@ export async function GET(request: Request) {
       ? await db.execute({ sql: "SELECT * FROM chapter_playlists WHERE lower(trim(subject))=lower(trim(?)) AND lower(trim(chapter))=lower(trim(?)) LIMIT 1", args: [subject, chapter] })
       : await db.execute("SELECT * FROM chapter_playlists ORDER BY lower(trim(subject)), lower(trim(chapter)), chapter");
 
+    const rootConfig = await db.execute("SELECT root_path FROM resource_sync_config WHERE id=1 LIMIT 1");
+    const rootKey = normalize(String((rootConfig.rows[0] as any)?.root_path || ""));
     const playlists: any[] = [];
     const seen = new Set<string>();
     for (const row of playlistResult.rows as any[]) {
-      const key = `${normalize(String(row.subject))}\n${normalize(String(row.chapter))}`;
+      // Only expose playlists backed by a real current filesystem chapter.
+      // This hides stale/blank DB entries immediately after an external rename,
+      // instead of waiting for another database cleanup path.
+      const sourcePath = String(row.video_root_path || row.class_video_path || row.dpp_video_path || "").trim();
+      if (sourcePath) {
+        const resolved = path.resolve(sourcePath);
+        const resolvedKey = normalize(resolved);
+        const underRoot = rootKey && (resolvedKey === rootKey || resolvedKey.startsWith(rootKey + "/"));
+        if (underRoot && (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory())) continue;
+      }
+      const key = `${normalize(String(row.subject))}\n${normalizeChapterName(String(row.chapter))}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const videos = await db.execute({ sql: "SELECT * FROM chapter_videos WHERE playlist_id=? AND category IN ('class','dpp') ORDER BY CASE category WHEN 'class' THEN 0 ELSE 1 END, position ASC, created_at ASC", args: [row.id] });
