@@ -194,6 +194,69 @@ export async function addStudySessions(db: Client) {
  * else, ours would be skipped on a database that already passed them. Everything here is IF NOT EXISTS /
  * add-column-if-missing, so running it again is harmless and guarantees all tables exist.
  */
+
+/** Resource library schema: filesystem sync metadata, chapter playlists, and video progress.
+ *  PDFs remain canonical in the Notes Viewer store; sync only adds/reuses PDF records and never deletes them.
+ */
+export async function addResourceSyncSchema(db: Client) {
+  await addColumnIfMissing(db, "pdfs", "content_hash", "TEXT");
+  await addColumnIfMissing(db, "pdfs", "source_path", "TEXT");
+  await addColumnIfMissing(db, "pdfs", "source_mtime", "INTEGER");
+
+  await db.execute(`CREATE TABLE IF NOT EXISTS resource_sync_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    root_path TEXT NOT NULL,
+    last_sync_at TEXT DEFAULT '',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  await db.execute(`CREATE TABLE IF NOT EXISTS chapter_playlists (
+    id TEXT PRIMARY KEY,
+    subject TEXT NOT NULL,
+    chapter TEXT NOT NULL,
+    class_notes_path TEXT,
+    dpp_notes_path TEXT,
+    video_root_path TEXT,
+    class_video_path TEXT,
+    dpp_video_path TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(subject, chapter)
+  )`);
+
+  await addColumnIfMissing(db, "chapter_playlists", "class_notes_path", "TEXT");
+  await addColumnIfMissing(db, "chapter_playlists", "dpp_notes_path", "TEXT");
+  await addColumnIfMissing(db, "chapter_playlists", "video_root_path", "TEXT");
+  await addColumnIfMissing(db, "chapter_playlists", "class_video_path", "TEXT");
+  await addColumnIfMissing(db, "chapter_playlists", "dpp_video_path", "TEXT");
+
+  await db.execute(`CREATE TABLE IF NOT EXISTS chapter_videos (
+    id TEXT PRIMARY KEY,
+    playlist_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    path_or_url TEXT NOT NULL,
+    location_type TEXT NOT NULL DEFAULT 'File Manager',
+    category TEXT NOT NULL DEFAULT 'class',
+    position INTEGER NOT NULL DEFAULT 1,
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    last_position_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (playlist_id) REFERENCES chapter_playlists(id) ON DELETE CASCADE
+  )`);
+
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_chapter_videos_playlist_category
+    ON chapter_videos (playlist_id, category, position)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_pdfs_subject_chapter
+    ON pdfs (subject, chapter)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_pdfs_source_path
+    ON pdfs (source_path)`);
+
+  // Legacy experimental category is no longer part of the UI.
+  await db.execute(`DELETE FROM chapter_videos WHERE lower(category) = 'other'`);
+}
+
 export async function ensureAllNewTables(db: Client) {
   await addMockTestDetail(db);
   await addDailyPlanItems(db);
@@ -208,6 +271,7 @@ const MIGRATIONS: Migration[] = [
   { version: 5, name: "mock test detail: test_name/duration/negative_marks + sections + topic losses", run: addMockTestDetail },
   { version: 6, name: "daily_plan_items (weak-topic revision queue)", run: addDailyPlanItems },
   { version: 7, name: "study_sessions + make sure mock/plan tables exist", run: ensureAllNewTables },
+  { version: 8, name: "resource sync schema + protected canonical PDFs", run: addResourceSyncSchema },
 ];
 
 async function snapshot(db: Client, label: string) {

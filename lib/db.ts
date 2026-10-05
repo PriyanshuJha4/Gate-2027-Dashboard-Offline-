@@ -211,7 +211,9 @@ async function createTables(): Promise<void> {
       mime_type TEXT DEFAULT 'application/pdf',
       last_page INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      source_path TEXT DEFAULT '',
+      source_mtime INTEGER DEFAULT 0
     )
   `);
 
@@ -324,6 +326,49 @@ async function createTables(): Promise<void> {
     `,
 
     `
+      CREATE TABLE IF NOT EXISTS chapter_playlists (
+        id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        chapter TEXT NOT NULL,
+        class_notes_path TEXT,
+        dpp_notes_path TEXT,
+        video_root_path TEXT,
+        class_video_path TEXT,
+        dpp_video_path TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(subject, chapter)
+      )
+    `,
+
+    `
+      CREATE TABLE IF NOT EXISTS chapter_videos (
+        id TEXT PRIMARY KEY,
+        playlist_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        path_or_url TEXT NOT NULL,
+        location_type TEXT NOT NULL DEFAULT 'File Manager',
+        category TEXT NOT NULL DEFAULT 'class',
+        position INTEGER NOT NULL DEFAULT 1,
+        duration_seconds INTEGER NOT NULL DEFAULT 0,
+        completed INTEGER NOT NULL DEFAULT 0,
+        last_position_seconds INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (playlist_id) REFERENCES chapter_playlists(id) ON DELETE CASCADE
+      )
+    `,
+
+    `
+      CREATE TABLE IF NOT EXISTS resource_sync_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        root_path TEXT NOT NULL DEFAULT '',
+        last_sync_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `,
+
+    `
       CREATE TABLE IF NOT EXISTS syllabus_progress (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -374,6 +419,38 @@ async function createTables(): Promise<void> {
 
   for (const sql of additionalTables) {
     await db.execute(sql);
+  }
+
+  // Scanned PDF source metadata migrations.
+  try {
+    const pdfColumns = await db.execute("PRAGMA table_info(pdfs)");
+    const names = new Set((pdfColumns.rows as any[]).map((row) => String(row.name)));
+    if (!names.has("source_path")) await db.execute("ALTER TABLE pdfs ADD COLUMN source_path TEXT DEFAULT ''");
+    if (!names.has("source_mtime")) await db.execute("ALTER TABLE pdfs ADD COLUMN source_mtime INTEGER DEFAULT 0");
+  } catch (error) {
+    console.warn("pdf source metadata migration skipped:", error);
+  }
+
+  // Chapter playlist folder-path migrations.
+  try {
+    const playlistColumns = await db.execute("PRAGMA table_info(chapter_playlists)");
+    const names = new Set((playlistColumns.rows as any[]).map((row) => String(row.name)));
+    if (!names.has("video_root_path")) await db.execute("ALTER TABLE chapter_playlists ADD COLUMN video_root_path TEXT DEFAULT ''");
+    if (!names.has("class_video_path")) await db.execute("ALTER TABLE chapter_playlists ADD COLUMN class_video_path TEXT DEFAULT ''");
+    if (!names.has("dpp_video_path")) await db.execute("ALTER TABLE chapter_playlists ADD COLUMN dpp_video_path TEXT DEFAULT ''");
+  } catch (error) {
+    console.warn("chapter_playlists path migration skipped:", error);
+  }
+
+  // Chapter video category migration for databases created before bulk playlists.
+  try {
+    const columns = await db.execute("PRAGMA table_info(chapter_videos)");
+    const hasCategory = (columns.rows as any[]).some((row) => String(row.name) === "category");
+    if (!hasCategory) {
+      await db.execute("ALTER TABLE chapter_videos ADD COLUMN category TEXT NOT NULL DEFAULT 'class'");
+    }
+  } catch (error) {
+    console.warn("chapter_videos category migration skipped:", error);
   }
 
   // ----------------------------------------------------------

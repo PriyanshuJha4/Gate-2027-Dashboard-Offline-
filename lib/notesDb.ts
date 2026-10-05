@@ -126,36 +126,6 @@ export async function getPdf(id: string): Promise<StoredPdf | undefined> {
   }
 }
 
-/** 
- * Uploads a PDF file along with Subject and Chapter metadata.
- * Saves physical file to filesystem and metadata to SQLite.
- */
-export async function uploadPdfWithMetadata(
-  file: File,
-  subject: string,
-  chapter: string,
-  title?: string
-): Promise<StoredPdf> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("subject", subject);
-  formData.append("chapter", chapter);
-  if (title) formData.append("title", title);
-
-  const res = await fetch("/api/pdfs/upload", {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.error || "Failed to upload PDF");
-  }
-
-  const data = await res.json();
-  return data.pdf;
-}
-
 // Keep putPdf as a wrapper or fallback if needed by older code
 export async function putPdf(pdf: StoredPdf): Promise<void> {
   // If needed, can update metadata via API
@@ -172,16 +142,6 @@ export async function updatePdf(
   patch: Partial<Omit<StoredPdf, "id" | "blob">>
 ): Promise<void> {
   await apiSend(`/api/pdfs/${encodeURIComponent(id)}`, "PATCH", patch);
-}
-
-/** Deletes the PDF together with its physical file, annotations, and bookmarks. */
-export async function deletePdf(id: string): Promise<void> {
-  try {
-    await apiSend(`/api/pdfs/${encodeURIComponent(id)}`, "DELETE");
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) return; // already gone
-    throw err;
-  }
 }
 
 /* ------------------------------- Annotations ------------------------------ */

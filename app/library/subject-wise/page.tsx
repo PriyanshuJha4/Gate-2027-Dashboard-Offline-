@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import Link from "next/link";
 import { GATE_SYLLABUS } from "@/lib/syllabus";
+import { CATEGORIES, SYLLABUS_DATA } from "@/lib/syllabusProgress";
+import { progressKey } from "@/lib/topics";
 
 interface SubjectResource {
   id: string;
@@ -23,6 +25,11 @@ export default function SubjectWiseLibraryPage() {
   const [pathOrUrl, setPathOrUrl] = useState("");
   const [type, setType] = useState("PDF");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [progressMap, setProgressMap] = useState<Record<string, boolean>>({});
+  const [progressError, setProgressError] = useState("");
+  const [openSubjects, setOpenSubjects] = useState<Record<string, boolean>>(() => ({
+    [GATE_SYLLABUS[0]?.subject || ""]: true,
+  }));
 
   // Database se resources fetch karne ke liye
   const fetchResources = async () => {
@@ -40,6 +47,39 @@ export default function SubjectWiseLibraryPage() {
   useEffect(() => {
     fetchResources();
   }, []);
+
+  useEffect(() => {
+    fetch("/api/syllabus-progress?userId=default_user", { cache: "no-store" })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Could not load syllabus progress");
+        setProgressMap(data || {});
+        setProgressError("");
+      })
+      .catch((e) => setProgressError(e?.message || "Could not load syllabus progress"));
+  }, []);
+
+  const toggleProgress = async (topicId: string, categoryKey: string) => {
+    const key = progressKey(topicId, categoryKey);
+    const next = !progressMap[key];
+    setProgressMap((prev) => ({ ...prev, [key]: next }));
+    try {
+      const res = await fetch("/api/syllabus-progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "default_user", topicKey: key, completed: next }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Could not save progress");
+      setProgressError("");
+    } catch (e: any) {
+      setProgressMap((prev) => ({ ...prev, [key]: !next }));
+      setProgressError(e?.message || "Could not save progress");
+    }
+  };
+
+  const toggleSubject = (subject: string) => {
+    setOpenSubjects((prev) => ({ ...prev, [subject]: !prev[subject] }));
+  };
 
   const handleOpenAdd = () => {
     setEditingId(null);
@@ -234,6 +274,81 @@ export default function SubjectWiseLibraryPage() {
           </table>
         </div>
       </div>
+
+      {/* Syllabus-synced chapter tree */}
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">🌳 Syllabus Progress Tree</h2>
+            <p className="text-xs text-slate-500 mt-1">Same progress source as the Syllabus Tracker. Changes made here sync back immediately.</p>
+          </div>
+          {progressError && <span className="text-xs text-red-500">{progressError}</span>}
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+          <table className="w-full min-w-[760px] text-xs">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-950/60 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                <th className="p-3 text-left min-w-[330px]">Subject / Chapter</th>
+                <th className="p-2 text-center w-24">Class Notes</th>
+                <th className="p-2 text-center w-24">DPP</th>
+                <th className="p-2 text-center w-24">PYQ</th>
+                <th className="p-2 text-center w-28">Revision Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SYLLABUS_DATA.map((group) => {
+                const open = !!openSubjects[group.subject];
+                const subjectTotal = group.topics.length * CATEGORIES.length;
+                const subjectDone = group.topics.reduce((sum, topic) => sum + CATEGORIES.filter((cat) => progressMap[progressKey(topic.id, cat.key)]).length, 0);
+                const subjectPct = subjectTotal ? Math.round((subjectDone / subjectTotal) * 100) : 0;
+                return (
+                  <Fragment key={group.subject}>
+                    <tr className="bg-slate-100/80 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-700">
+                      <td colSpan={1} className="p-3">
+                        <button type="button" onClick={() => toggleSubject(group.subject)} className="flex w-full items-center gap-2 text-left font-bold text-slate-800 dark:text-slate-100">
+                          <span className="w-4 text-slate-400">{open ? "▾" : "▸"}</span>
+                          <span>{group.subject}</span>
+                          <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] ${subjectPct === 100 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"}`}>
+                            {subjectDone}/{subjectTotal} · {subjectPct}%
+                          </span>
+                        </button>
+                      </td>
+                      <td colSpan={4} className="p-2">
+                        <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                          <div className="h-full bg-indigo-500 transition-all" style={{ width: `${subjectPct}%` }} />
+                        </div>
+                      </td>
+                    </tr>
+                    {open && group.topics.map((topic) => (
+                      <tr key={topic.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                        <td className="p-2.5 pl-10 font-medium text-slate-700 dark:text-slate-300">
+                          <span className="mr-2 text-slate-300 dark:text-slate-600">└─</span>{topic.name}
+                        </td>
+                        {CATEGORIES.map((cat) => {
+                          const key = progressKey(topic.id, cat.key);
+                          const checked = !!progressMap[key];
+                          return (
+                            <td key={cat.key} className="p-2 text-center">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleProgress(topic.id, cat.key)}
+                                className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                aria-label={`${topic.name}: ${cat.label}`}
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

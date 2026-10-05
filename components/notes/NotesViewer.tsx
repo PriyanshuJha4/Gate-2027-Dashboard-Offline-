@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { loadPdfjs } from "@/lib/pdfjs";
 import {
   deleteBookmark,
-  deletePdf,
   getAnnotationsForPdf,
   getPdf,
   listBookmarks,
@@ -13,7 +12,6 @@ import {
   putBookmark,
   saveAnnotations,
   updatePdf,
-  uploadPdfWithMetadata,
   type Annotation,
   type Bookmark,
   type StoredPdf,
@@ -34,126 +32,6 @@ const TOOLS: { id: Tool; icon: string; label: string }[] = [
 const PEN_PRESETS = ["#ef4444", "#2563eb", "#16a34a", "#111827", "#ffffff"];
 const HL_PRESETS = ["#facc15", "#4ade80", "#38bdf8", "#f472b6", "#fb923c"];
 
-// Pre-defined complete syllabus structure mapping subjects to their chapters
-const PREDEFINED_SYLLABUS: Record<string, string[]> = {
-  "C Programming": [
-    "Data Types and Operators",
-    "Control Flow Statements",
-    "Functions & storage",
-    "Arrays and Pointers",
-    "String in C Programming",
-    "Structure and Union",
-    "Miscellaneous Topics",
-  ],
-  "Data Structures": [
-    "Introduction to DSA",
-    "Arrays",
-    "Linked List",
-    "Stack and Queues",
-    "Tree",
-    "Graphs",
-    "Hashing",
-  ],
-  "COA": [
-    "Introduction of COA",
-    "Machine Instruction & Addressing Modes",
-    "Floating Point",
-    "ALU & Control Unit",
-    "Instruction Pipelining",
-    "Cache Memory",
-    "Secondary Memory & IO Interface",
-  ],
-  "algorithms": [
-    "Analysis of Algorithm",
-    "Design Strategies",
-    "Greedy Method",
-    "Dynamic Programming",
-    "Graph Algorithms",
-    "Heap Algorithms",
-    "Backtracking & Branch Bound",
-  ],
-  "Digital Logic": [
-    "Logic Gates",
-    "Minimization of Boolean Function",
-    "Combinational Circuits",
-    "Sequential Logic Circuits",
-    "Number System",
-  ],
-  "Discrete Mathematics": [
-    "Graph Theory",
-    "Mathematical logic",
-    "Set Theory",
-    "Combinatorics",
-  ],
-  "Engineering mathematics": [
-    "Probability and statistics",
-    "Single Variable Calculus",
-    "Linear Algebra",
-  ],
-  "Aptitude": [
-    "Verbal Aptitude",
-    "Quantitative Aptitude",
-    "Clocks & Calendars",
-    "Percentages & Profit loss",
-    "Numbers & Counting Theory",
-    "Time and Work",
-    "Time and Distance",
-    "Data Interpretation",
-    "Spatial Aptitude",
-    "Formation of Image",
-    "Analytical Aptitude",
-    "Arrangement & Problem Solving",
-    "Directions & Blood Relations",
-    "Venn Diagrams & Syllogism",
-  ],
-  "TOC": [
-    "Finite Automata",
-    "Push Down Automata",
-    "Turing Machine",
-    "Decidability",
-  ],
-  "DBMS": [
-    "FD's & Normalization",
-    "Transaction & Concurrency Control",
-    "ER Model",
-    "Query Language",
-    "File Org & Indexing",
-  ],
-  "Computer Networks": [
-    "IPv4 Addressing",
-    "Error Control",
-    "Flow Control",
-    "IPv4 Header & Fragmentation",
-    "TCP & UDP",
-    "Medium Access Control",
-    "Switching",
-    "Application Layer Protocol",
-    "IP Support Protocol",
-    "OSI and TCP/IP Protocol",
-  ],
-  "COMPILER Design": [
-    "Lexical Analysis & Syntax Analysis",
-    "Syntax Directed Translation",
-    "Intermediate Code & Code Optimization",
-  ],
-  "Operating Systems": [
-    "Introduction and background",
-    "Process Management",
-    "CPU Scheduling",
-    "Process Synchronization",
-    "Dead Lock",
-    "Memory Management",
-    "File System & Device Management",
-    "System Calls and Threads",
-    "Revision",
-  ],
-};
-
-function formatSize(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function uid() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -171,7 +49,6 @@ export default function NotesViewer() {
   // VS Code style tree open/closed states for folders & chapters
   const [openSubjects, setOpenSubjects] = useState<Record<string, boolean>>({});
   const [openChapters, setOpenChapters] = useState<Record<string, boolean>>({});
-  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   // File-manager sidebar: search + mobile drawer
   const [search, setSearch] = useState("");
@@ -179,17 +56,6 @@ export default function NotesViewer() {
 
   // Multi-select state (stores selected PDF IDs)
   const [selectedPdfIds, setSelectedPdfIds] = useState<Set<string>>(new Set());
-
-  /* ----------------------------- Upload Modal ----------------------------- */
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [subjectMode, setSubjectMode] = useState<"select" | "new">("select");
-  const [selectedSubject, setSelectedSubject] = useState("");
-  const [newSubject, setNewSubject] = useState("");
-
-  const [chapterMode, setChapterMode] = useState<"select" | "new">("select");
-  const [selectedChapter, setSelectedChapter] = useState("");
-  const [newChapter, setNewChapter] = useState("");
-  const [uploading, setUploading] = useState(false);
 
   /* -------------------------------- Viewer -------------------------------- */
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -232,37 +98,47 @@ export default function NotesViewer() {
   const activePdf = pdfs.find((p) => p.id === activeId) || null;
   const pageWidth = Math.round(Math.max(240, Math.min(containerW - 32, 1100) * zoom));
 
-  // Combine predefined syllabus subjects with any custom user-added subjects from database and sort alphabetically
-  const allSubjectsList = useMemo(() => {
-    const dbSubjects = pdfs.map((p) => p.subject).filter(Boolean);
-    const predefinedKeys = Object.keys(PREDEFINED_SYLLABUS);
-    return Array.from(new Set([...predefinedKeys, ...dbSubjects])).sort((a, b) => a.localeCompare(b));
-  }, [pdfs]);
+  // Group PDFs by a canonical Subject -> Chapter key.
+  // This is deliberately done at render time too: old DB rows can contain
+  // invisible Unicode characters / NBSPs, and those must never create a second
+  // visually identical folder in Notes Viewer.
+  const folderKey = useCallback((value: string, fallback: string) =>
+    String(value || fallback)
+      .normalize("NFKC")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase(),
+  []);
 
-  // Get available chapters for the selected subject sorted alphabetically
-  const availableChapters = useMemo(() => {
-    const subj = subjectMode === "select" ? selectedSubject : "";
-    if (!subj) return [];
-    
-    const predefinedChs = PREDEFINED_SYLLABUS[subj] || [];
-    const dbChs = pdfs
-      .filter((p) => p.subject && p.subject.toLowerCase() === subj.toLowerCase())
-      .map((p) => p.chapter)
-      .filter(Boolean);
+  const displayLabel = useCallback((value: string, fallback: string) =>
+    String(value || fallback)
+      .normalize("NFKC")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || fallback,
+  []);
 
-    return Array.from(new Set([...predefinedChs, ...dbChs])).sort((a, b) => a.localeCompare(b));
-  }, [pdfs, subjectMode, selectedSubject]);
-
-  // Group PDFs by Subject -> Chapter and sort everything in Ascending Order (A to Z)
   const pdfTree = useMemo(() => {
     const rawTree: Record<string, Record<string, StoredPdf[]>> = {};
-    
-    // Sort pdfs by name first
+    const subjectLabels = new Map<string, string>();
+    const chapterLabels = new Map<string, string>();
+
+    // Sort PDFs by name first.
     const sortedPdfs = [...pdfs].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
     sortedPdfs.forEach((pdf) => {
-      const subj = pdf.subject || "Uncategorized";
-      const chap = pdf.chapter || "General";
+      const rawSubj = displayLabel(pdf.subject, "Uncategorized");
+      const rawChap = displayLabel(pdf.chapter, "General");
+      const subjKey = folderKey(rawSubj, "Uncategorized");
+      const chapKey = folderKey(rawChap, "General");
+      const subj = subjectLabels.get(subjKey) || rawSubj;
+      const chapMapKey = `${subjKey}\n${chapKey}`;
+      const chap = chapterLabels.get(chapMapKey) || rawChap;
+      subjectLabels.set(subjKey, subj);
+      chapterLabels.set(chapMapKey, chap);
       if (!rawTree[subj]) rawTree[subj] = {};
       if (!rawTree[subj][chap]) rawTree[subj][chap] = [];
       rawTree[subj][chap].push(pdf);
@@ -282,7 +158,7 @@ export default function NotesViewer() {
     });
 
     return tree;
-  }, [pdfs]);
+  }, [pdfs, folderKey, displayLabel]);
 
   // Search filter for the sidebar tree (matches subject, chapter or file name)
   const q = search.trim().toLowerCase();
@@ -312,6 +188,19 @@ export default function NotesViewer() {
 
   const activeSubject = activePdf ? activePdf.subject || "Uncategorized" : "";
   const activeChapter = activePdf ? activePdf.chapter || "General" : "";
+
+  // Persist the exact last-opened PDF plus its chapter. If a sync later replaces
+  // the PDF id, the chapter fallback still restores the same place.
+  useEffect(() => {
+    if (!activePdf) return;
+    try {
+      localStorage.setItem("notes:last-opened", JSON.stringify({
+        pdfId: activePdf.id,
+        subject: activePdf.subject || "",
+        chapter: activePdf.chapter || "",
+      }));
+    } catch { /* ignore */ }
+  }, [activePdf]);
 
   // Reveal the active file's folders in the tree whenever it changes
   useEffect(() => {
@@ -591,6 +480,16 @@ export default function NotesViewer() {
           openPdf(wanted, wantedPage);
         } else if (wanted) {
           setOpenError("The PDF linked from this flashcard is no longer in your library.");
+        } else {
+          try {
+            const saved = JSON.parse(localStorage.getItem("notes:last-opened") || "null");
+            const savedPdf = saved?.pdfId ? list.find((p) => p.id === saved.pdfId) : undefined;
+            const fallback = savedPdf || list.find((p) =>
+              String(p.subject || "").trim().toLowerCase() === String(saved?.subject || "").trim().toLowerCase() &&
+              String(p.chapter || "").trim().toLowerCase() === String(saved?.chapter || "").trim().toLowerCase()
+            );
+            if (fallback) openPdf(fallback.id, fallback.lastPage || 1);
+          } catch { /* ignore malformed local state */ }
         }
       } catch (e) {
         console.error(e);
@@ -666,128 +565,6 @@ export default function NotesViewer() {
     setTimeout(() => scrollToPage(p, "auto"), 60);
   }
 
-  /* ----------------------------- Upload / delete -------------------------- */
-
-  function handleFileSelect(e: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (files.length === 0) return;
-
-    processSelectedFiles(files);
-  }
-
-  function processSelectedFiles(files: File[]) {
-    const valid = files.filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
-    if (valid.length === 0) {
-      showToast("Please select valid PDF files.");
-      return;
-    }
-
-    setPendingFiles(valid);
-    
-    // Set default values for modal
-    const subs = Object.keys(PREDEFINED_SYLLABUS).sort();
-    if (subs.length > 0) {
-      setSubjectMode("select");
-      setSelectedSubject(subs[0]);
-      const chs = PREDEFINED_SYLLABUS[subs[0]] || [];
-      if (chs.length > 0) {
-        setChapterMode("select");
-        setSelectedChapter(chs[0]);
-      } else {
-        setChapterMode("new");
-        setSelectedChapter("");
-        setNewChapter("");
-      }
-    } else {
-      setSubjectMode("new");
-      setSelectedSubject("");
-      setNewSubject("");
-      setChapterMode("new");
-      setSelectedChapter("");
-      setNewChapter("");
-    }
-  }
-
-  // Drag and Drop handlers for upload zone
-  function handleDragOver(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(true);
-  }
-
-  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    // Ignore leave events fired when moving between child elements
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-    setIsDraggingOver(false);
-  }
-
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingOver(false);
-
-    const droppedFiles = Array.from(e.dataTransfer.files || []);
-    if (droppedFiles.length > 0) {
-      processSelectedFiles(droppedFiles);
-    }
-  }
-
-  async function handleUploadSubmit(e: FormEvent) {
-    e.preventDefault();
-    const finalSubject = (subjectMode === "new" ? newSubject : selectedSubject).trim();
-    const finalChapter = (chapterMode === "new" ? newChapter : selectedChapter).trim();
-
-    if (pendingFiles.length === 0 || !finalSubject || !finalChapter) return;
-
-    setUploading(true);
-    let firstId = "";
-    try {
-      for (const file of pendingFiles) {
-        const uploadedPdf = await uploadPdfWithMetadata(file, finalSubject, finalChapter);
-        if (!firstId) firstId = uploadedPdf.id;
-      }
-      setPdfs(await listPdfs());
-      setPendingFiles([]);
-      if (firstId) openPdf(firstId);
-      showToast("PDF(s) uploaded successfully ✓");
-    } catch (err: any) {
-      console.error(err);
-      showToast(err.message || "Could not upload PDF");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function handleDelete(pdf: StoredPdf) {
-    const ok = window.confirm(
-      `Delete "${pdf.name}" along with its physical file, annotations, and bookmarks?`
-    );
-    if (!ok) return;
-
-    try {
-      if (pdf.id === activeIdRef.current) {
-        openSeq.current++;
-        if (saveTimer.current) clearTimeout(saveTimer.current);
-        dirtyRef.current.clear();
-        activeIdRef.current = null;
-        setActiveId(null);
-        setDoc(null);
-        setNumPages(0);
-        setAnnotations({});
-        setBookmarks([]);
-      }
-      await deletePdf(pdf.id);
-      setPdfs(await listPdfs());
-      showToast("PDF deleted successfully");
-    } catch (err) {
-      console.error(err);
-      showToast("Could not delete this PDF");
-    }
-  }
-
   // Handle direct file download
   function handleDownload(pdf: StoredPdf, e: React.MouseEvent) {
     e.stopPropagation();
@@ -839,37 +616,6 @@ export default function NotesViewer() {
       }
       return next;
     });
-  }
-
-  async function handleBulkDelete() {
-    if (selectedPdfIds.size === 0) return;
-    const ok = window.confirm(`Delete ${selectedPdfIds.size} selected PDF(s) along with their physical files and annotations?`);
-    if (!ok) return;
-
-    try {
-      if (activeIdRef.current && selectedPdfIds.has(activeIdRef.current)) {
-        openSeq.current++;
-        if (saveTimer.current) clearTimeout(saveTimer.current);
-        dirtyRef.current.clear();
-        activeIdRef.current = null;
-        setActiveId(null);
-        setDoc(null);
-        setNumPages(0);
-        setAnnotations({});
-        setBookmarks([]);
-      }
-
-      for (const id of selectedPdfIds) {
-        await deletePdf(id);
-      }
-
-      setPdfs(await listPdfs());
-      setSelectedPdfIds(new Set());
-      showToast("Selected PDFs deleted successfully");
-    } catch (err) {
-      console.error(err);
-      showToast("Could not delete some PDFs");
-    }
   }
 
   function handleBulkDownload() {
@@ -958,36 +704,19 @@ export default function NotesViewer() {
           showLibrary ? "lg:flex" : "lg:hidden"
         }`}
       >
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          className="relative flex min-h-0 flex-1 flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-        >
-          {isDraggingOver && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-500 bg-indigo-50/90 text-xs font-medium text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-200">
-              📥 Drop PDFs to upload
-            </div>
-          )}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
 
           {/* Header */}
           <div className="flex items-center gap-1">
             <h2 className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-slate-800 dark:text-slate-100">
               <span>📁</span> Notes Explorer
             </h2>
-            <label
-              className="cursor-pointer rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white shadow-sm hover:bg-indigo-500"
-              title="Upload PDF (or drag & drop anywhere in this panel)"
+            <span
+              className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+              title="Add PDFs in Resource Root, then use Sync Library"
             >
-              ＋ Upload
-              <input
-                type="file"
-                accept="application/pdf,.pdf"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-            </label>
+              Root → Sync only
+            </span>
             {/* Desktop: collapse */}
             <button
               onClick={() => toggleLibrary(false)}
@@ -1069,13 +798,6 @@ export default function NotesViewer() {
                 >
                   📥
                 </button>
-                <button
-                  onClick={handleBulkDelete}
-                  className="rounded bg-red-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-red-500"
-                  title="Delete selected PDFs"
-                >
-                  🗑️
-                </button>
               </div>
             </div>
           )}
@@ -1085,7 +807,7 @@ export default function NotesViewer() {
             <p className="py-4 text-center text-xs text-slate-400">Loading workspace...</p>
           ) : pdfs.length === 0 ? (
             <p className="py-4 text-center text-xs text-slate-400">
-              No PDFs yet. Click Upload or drop files here.
+              No PDFs yet. Add PDFs to Resource Root and click Sync Library.
             </p>
           ) : Object.keys(filteredTree).length === 0 ? (
             <p className="py-4 text-center text-xs text-slate-400">No matches for “{search}”.</p>
@@ -1124,7 +846,7 @@ export default function NotesViewer() {
                       <input
                         type="checkbox"
                         checked={isSubAllSelected}
-                        onChange={(e) => toggleSelectSubject(chapters, e as any)}
+                        onChange={(e) => toggleSelectSubject(chapters as Record<string, StoredPdf[]>, e as any)}
                         className="ml-2 h-3.5 w-3.5 cursor-pointer rounded accent-indigo-600"
                         title="Select all in subject"
                       />
@@ -1206,16 +928,6 @@ export default function NotesViewer() {
                                           >
                                             📥
                                           </button>
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleDelete(p);
-                                            }}
-                                            className="p-0.5 text-slate-400 hover:text-red-500"
-                                            title="Delete PDF"
-                                          >
-                                            🗑
-                                          </button>
                                         </div>
                                       </div>
                                     );
@@ -1250,7 +962,7 @@ export default function NotesViewer() {
             ) : (
               <>
                 <p className="mb-1 text-3xl">📝</p>
-                <p>Upload a PDF or select one from the tree sidebar to start.</p>
+                <p>Add PDFs to Resource Root, run Sync Library, then select one here.</p>
                 <button
                   onClick={openSidebar}
                   className={`mt-3 text-xs text-indigo-600 hover:underline ${
@@ -1537,157 +1249,6 @@ export default function NotesViewer() {
           </>
         )}
       </section>
-
-      {/* Metadata Input Modal on Upload with Select/New Folder options */}
-      {pendingFiles.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900">
-            <h3 className="mb-1 text-base font-bold text-slate-800 dark:text-slate-100">
-              📂 Organize PDF Upload
-            </h3>
-            <p className="mb-4 text-xs text-slate-500">
-              Selected: {pendingFiles.map((f) => f.name).join(", ")}
-            </p>
-
-            <form onSubmit={handleUploadSubmit} className="space-y-4">
-              {/* Subject Selection */}
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Subject *
-                </label>
-                {allSubjectsList.length > 0 && subjectMode === "select" ? (
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedSubject}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "__NEW__") {
-                          setSubjectMode("new");
-                          setNewSubject("");
-                        } else {
-                          setSelectedSubject(val);
-                          const chs = PREDEFINED_SYLLABUS[val] || [];
-                          if (chs.length > 0) {
-                            setChapterMode("select");
-                            setSelectedChapter(chs[0]);
-                          } else {
-                            setChapterMode("new");
-                            setSelectedChapter("");
-                            setNewChapter("");
-                          }
-                        }
-                      }}
-                      className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-xs dark:border-slate-700 dark:text-white"
-                    >
-                      {allSubjectsList.map((s) => (
-                        <option key={s} value={s} className="dark:bg-slate-900">
-                          📁 {s}
-                        </option>
-                      ))}
-                      <option value="__NEW__" className="dark:bg-slate-900 font-semibold text-indigo-600">
-                        ＋ Create new subject...
-                      </option>
-                    </select>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      required
-                      value={newSubject}
-                      onChange={(e) => setNewSubject(e.target.value)}
-                      placeholder="Enter new subject name..."
-                      className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-xs dark:border-slate-700 dark:text-white"
-                      autoFocus
-                    />
-                    {allSubjectsList.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setSubjectMode("select")}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Chapter Selection */}
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Chapter *
-                </label>
-                {availableChapters.length > 0 && chapterMode === "select" ? (
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedChapter}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "__NEW__") {
-                          setChapterMode("new");
-                          setNewChapter("");
-                        } else {
-                          setSelectedChapter(val);
-                        }
-                      }}
-                      className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-xs dark:border-slate-700 dark:text-white"
-                    >
-                      {availableChapters.map((c) => (
-                        <option key={c} value={c} className="dark:bg-slate-900">
-                          📄 {c}
-                        </option>
-                      ))}
-                      <option value="__NEW__" className="dark:bg-slate-900 font-semibold text-indigo-600">
-                        ＋ Create new chapter...
-                      </option>
-                    </select>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      required
-                      value={newChapter}
-                      onChange={(e) => setNewChapter(e.target.value)}
-                      placeholder="Enter new chapter name..."
-                      className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-xs dark:border-slate-700 dark:text-white"
-                      autoFocus={subjectMode !== "new"}
-                    />
-                    {availableChapters.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setChapterMode("select")}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setPendingFiles([])}
-                  disabled={uploading}
-                  className="rounded-lg px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={uploading}
-                  className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {uploading ? "Uploading & Saving..." : "Save PDF"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {cardDraft && activePdf && (
         <CardDialog

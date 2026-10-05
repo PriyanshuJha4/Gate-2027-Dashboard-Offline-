@@ -12,7 +12,7 @@ export default function NotesPage() {
       <div className="mb-4">
         <h1 className="text-xl font-bold text-slate-900 dark:text-white">📝 Notes Viewer</h1>
         <p className="mt-0.5 text-xs text-slate-500">
-          Open your PDF notes, annotate them, and turn any part of a page into a flashcard.
+          PDFs are imported only from Resource Root → Sync Library. Use this page to view, annotate, bookmark, and create flashcards.
         </p>
       </div>
       <NotesViewer />

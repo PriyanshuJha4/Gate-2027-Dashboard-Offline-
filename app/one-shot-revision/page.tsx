@@ -103,28 +103,17 @@ function escapeMarkdown(value: string): string {
 
 function getImageSrc(value: any): string {
   if (!value) return "";
-
   if (typeof value === "string") {
-    const src = value.trim();
-    if (!src) return "";
-    if (/^(data:image\/|blob:|https?:\/\/)/i.test(src)) return src;
-    if (src.startsWith("/api/screenshots/file?")) return src;
-    if (src.startsWith("/")) return src;
-
-    // Stored dashboard/error-log image path, e.g. screenshots/<id>/<file>.png
-    const normalized = src.replace(/^\.\//, "").replace(/^\/+/, "");
-    if (normalized.toLowerCase().startsWith("screenshots/")) {
-      return `/api/screenshots/file?p=${encodeURIComponent(normalized)}`;
+    if (value.startsWith("data:image/")) return value;
+    if (value.startsWith("/")) return value;
+    if (value.startsWith("screenshots/")) {
+      return `/api/screenshots/file?p=${encodeURIComponent(value)}`;
     }
-
-    return src;
+    return value;
   }
-
   if (typeof value === "object") {
-    // Prefer an already resolved browser URL/data URL over the stored path.
-    return getImageSrc(value.dataUrl || value.url || value.path || "");
+    return getImageSrc(value.dataUrl || value.path || value.url || "");
   }
-
   return "";
 }
 
@@ -309,12 +298,7 @@ function buildMarkdown(data: RevisionData): string {
     lines.push("");
 
     if (card.frontImage) {
-      const imageSrc = getImageSrc(card.frontImage);
-      if (imageSrc) {
-        lines.push(`![Flashcard question image](${imageSrc})`);
-      } else {
-        lines.push("[Image-based question]");
-      }
+      lines.push("[Image-based question]");
       lines.push("");
     }
 
@@ -384,16 +368,6 @@ function buildMarkdown(data: RevisionData): string {
         `**Correct Concept:** ${escapeMarkdown(error.correctConcept)}`
       );
       lines.push("");
-    }
-
-    if (error.images?.length) {
-      for (const image of error.images) {
-        const imageSrc = getErrorImageSrc(image);
-        if (imageSrc) {
-          lines.push(`![${escapeMarkdown(image?.name || "Error screenshot")}](${imageSrc})`);
-          lines.push("");
-        }
-      }
     }
 
     lines.push(
@@ -482,8 +456,8 @@ function buildHtml(data: RevisionData): string {
           )}</h3>
 
           ${
-            card.frontImage && getImageSrc(card.frontImage)
-              ? `<figure class="revision-image"><img src="${escapeHtml(getImageSrc(card.frontImage))}" alt="Flashcard question image ${index + 1}"><figcaption>Image-based flashcard question</figcaption></figure>`
+            card.frontImage
+              ? `<figure class="flashcard-image"><img src="${escapeHtml(getImageSrc(card.frontImage))}" alt="Flashcard question image ${index + 1}"><figcaption>Image-based flashcard question</figcaption></figure>`
               : ""
           }
 
@@ -567,17 +541,6 @@ function buildHtml(data: RevisionData): string {
               : ""
           }
 
-          ${
-            (error.images || [])
-              .map((image: any, imageIndex: number) => {
-                const src = getErrorImageSrc(image);
-                return src
-                  ? `<figure class="revision-image"><img src="${escapeHtml(src)}" alt="Error screenshot ${imageIndex + 1}"><figcaption>${escapeHtml(image?.name || `Screenshot ${imageIndex + 1}`)}</figcaption></figure>`
-                  : "";
-              })
-              .join("")
-          }
-
           <p>
             <strong>Status:</strong>
             ${error.mastered ? "Mastered" : "Needs Revision"}
@@ -632,33 +595,36 @@ section,
   padding: 16px;
 }
 
-.summary {
-  background: #f3f4f6;
-  padding: 16px;
-  border-radius: 8px;
-}
-
-.revision-image {
+.flashcard-image {
   margin: 14px 0;
   padding: 8px;
   border: 1px solid #d1d5db;
   border-radius: 8px;
-  background: #f9fafb;
+  background: #f8fafc;
   text-align: center;
 }
 
-.revision-image img {
+.flashcard-image img {
   display: block;
-  width: 100%;
-  max-height: 560px;
-  object-fit: contain;
+  max-width: 100%;
+  max-height: 520px;
+  width: auto;
+  height: auto;
   margin: 0 auto;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
-.revision-image figcaption {
+.flashcard-image figcaption {
   margin-top: 6px;
+  color: #64748b;
   font-size: 12px;
-  color: #6b7280;
+}
+
+.summary {
+  background: #f3f4f6;
+  padding: 16px;
+  border-radius: 8px;
 }
 
 @media print {
@@ -1331,25 +1297,18 @@ export default function OneShotRevisionPage() {
                         {card.front || "Image-based question"}
                       </h3>
 
-                      {card.frontImage && (() => {
-                        const src = getImageSrc(card.frontImage);
-                        return src ? (
-                          <figure className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/40">
-                            <img
-                              src={src}
-                              alt={`Flashcard question image ${index + 1}`}
-                              className="max-h-[520px] w-full rounded-lg object-contain"
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.style.display = "none";
-                              }}
-                            />
-                            <figcaption className="mt-2 text-xs text-slate-500">
-                              Image-based flashcard question
-                            </figcaption>
-                          </figure>
-                        ) : null;
-                      })()}
+                      {card.frontImage && (
+                        <figure className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800/40">
+                          <img
+                            src={getImageSrc(card.frontImage)}
+                            alt={`Flashcard question image ${index + 1}`}
+                            className="max-h-[32rem] w-full rounded-lg object-contain"
+                          />
+                          <figcaption className="mt-2 px-1 text-xs text-slate-500">
+                            Image-based flashcard question
+                          </figcaption>
+                        </figure>
+                      )}
 
                       <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-700">
                         <p className="mb-1 text-xs font-bold uppercase tracking-wide text-green-600 dark:text-green-400">
@@ -1495,11 +1454,7 @@ export default function OneShotRevisionPage() {
                                   <img
                                     src={src}
                                     alt={`Error screenshot ${imageIndex + 1}`}
-                                    className="max-h-[520px] w-full rounded-lg object-contain"
-                                    loading="lazy"
-                                    onError={(event) => {
-                                      event.currentTarget.style.display = "none";
-                                    }}
+                                    className="max-h-96 w-full rounded-lg object-contain"
                                   />
                                   {image?.name && (
                                     <figcaption className="mt-2 truncate px-1 text-xs text-slate-500">
