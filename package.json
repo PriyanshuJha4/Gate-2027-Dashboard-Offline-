@@ -1,0 +1,30 @@
+{
+  "name": "gate-2027-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -H 127.0.0.1",
+    "build": "next build",
+    "start": "node scripts/preflight.mjs && node scripts/backup.mjs && next start -H 127.0.0.1",
+    "backup": "node scripts/backup.mjs",
+    "lint": "next lint",
+    "postinstall": "node scripts/copy-pdf-worker.mjs"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "next": "14.2.35",
+    "pdfjs-dist": "3.11.174",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.15",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.41",
+    "tailwindcss": "3.4.9",
+    "typescript": "5.5.4"
+  }
+}

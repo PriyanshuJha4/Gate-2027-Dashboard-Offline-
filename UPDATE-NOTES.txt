@@ -1,0 +1,16 @@
+GATE Dashboard update 1: topic IDs + screenshots as files + full backup
+
+1. Stop the app.
+2. Copy these files over your project folder (same paths).
+3. DELETE these two folders (duplicates, replaced):
+     app/api/weekly-matrix-progress
+     app/api/pdfs/todo-list
+4. Edit .env.local  ->  remove the DATABASE_URL line (unused), add:
+     DATA_DIR=D:/GATE-Data
+     BACKUP_DIR=D:/GATE-Backup
+   Move local.db (and pdfs/ if any) into D:/GATE-Data BEFORE the first start,
+   otherwise the app starts with an empty database.
+5. npm run build, then npm start.
+   First start: automatic snapshot -> <BACKUP_DIR>/db/pre-migration-*.db, then topic ids, syllabus keys
+   and screenshots are migrated. No new npm packages needed.
+6. Open "Backup & Restore" in the menu (/settings).

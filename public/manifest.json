@@ -1,0 +1,22 @@
+{
+  "name": "GATE 2027 Preparation Dashboard",
+  "short_name": "GATE 2027",
+  "description": "Personalized Preparation Dashboard for GATE 2027",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f4e79",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark mode: native inputs/scrollbars bhi dark ho jaye */
+  .dark {
+    color-scheme: dark;
+  }
+  /* Jin elements par sirf `border` hai (color class nahi), unka default light-gray dark me chamakta hai */
+  .dark *,
+  .dark ::before,
+  .dark ::after {
+    border-color: theme("colors.slate.700");
+  }
+  /* Recharts ke colors Tailwind classes nahi hote */
+  .dark .recharts-cartesian-axis-tick-value {
+    fill: #94a3b8;
+  }
+  .dark .recharts-cartesian-grid line {
+    stroke: #334155;
+  }
+  .dark .recharts-default-tooltip {
+    background-color: #0f172a !important;
+    border-color: #334155 !important;
+  }
+  .dark .recharts-tooltip-label,
+  .dark .recharts-tooltip-item {
+    color: #e2e8f0 !important;
+  }
+}
+
+/* =========================================================
+   ONE-SHOT REVISION PRINT
+   ========================================================= */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /*
+   * Hide everything outside the revision document.
+   * The page adds `one-shot-printing` immediately before
+   * window.print().
+   */
+  body.one-shot-printing > * {
+    visibility: hidden !important;
+  }
+
+  body.one-shot-printing
+    .one-shot-revision-print-root,
+  body.one-shot-printing
+    .one-shot-revision-print-root * {
+    visibility: visible !important;
+  }
+
+  body.one-shot-printing
+    .one-shot-revision-print-root {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .one-shot-document {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  .one-shot-document * {
+    color: black !important;
+  }
+
+  .revision-section {
+    break-inside: auto;
+  }
+
+  .flashcard-item,
+  .error-log-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #d1d5db !important;
+    background: white !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: black !important;
+  }
+
+  h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  a {
+    color: black !important;
+    text-decoration: none !important;
+  }
+}
